@@ -1,0 +1,287 @@
+#!/bin/sh
+
+n="
+"
+
+
+## Configuration
+MOMMY_CAREGIVER="phishy"
+MOMMY_PRONOUNS="they them their"
+MOMMY_SWEETIE="pookie"
+MOMMY_PREFIX=""
+MOMMY_SUFFIX=""
+
+MOMMY_CAPITALIZE="0"
+MOMMY_COLOR="197"
+
+MOMMY_COMPLIMENTS="
+# generic~
+*nyoms your arm*~
+Imma gworp yew %%SWEETIE%%~
+
+# good X~
+floofy %%SWEETIE%%~
+*pets yew*~
+mewo~
+*nuzzles you*
+
+
+# proud~
+*nya*~
+OwO floofy %%SWEETIE%%~
+%%CAREGIVER%% wuvs yew~ >w<
+
+
+# compliment~
+OwO Whats this~
+*nyoms youw awm*~
+%%SWEETIE%% is sow thwicc~
+
+# reward~
+%%CAREGIVER%% thwinks you desewve a tweat fow that~
+ewe hey %%SWEETIE%%~
+"
+MOMMY_COMPLIMENTS_EXTRA=""
+MOMMY_COMPLIMENTS_ENABLED="1"
+
+MOMMY_ENCOURAGEMENTS="
+# trust~
+%%CAREGIVER%% has a guwn :3
+%%CAREGIVER%% knows whewe yew wive~
+%%SWEETIE%%, yew bettew not fwuck up awgain~
+jwust %%CAREGIVER%%~, no escwape~
+*rawr*~ >:3
+
+# consolation~
+It wonwt bwe awight~
+yew fwucked uwp~
+%%CAREGIVER%% knows who yew cawe abwout mowst~
+
+# fallback~
+%%CAREGIVER%% swees yew~
+%%CAREGIVER%% wiww kiww yow wuved wuns if %%THEY%% swee yew fwuk uwp awgain~
+%%CAREGIVER%% wiww kiww ewwywun yew know~ :3
+
+# encouragement~
+gwive uwp, thewe is nwo howpe
+yew wiww nwevew dew it
+%%CAREGIVER%% knows yew cawn nevew dew it
+
+# clean up~
+%%SWEETIE%% fwucked up
+"
+MOMMY_ENCOURAGEMENTS_EXTRA=""
+MOMMY_ENCOURAGEMENTS_ENABLED="1"
+
+MOMMY_FORBIDDEN_WORDS=""
+MOMMY_IGNORED_STATUSES="130"
+
+
+## Lists
+# A list is a collection of entries. Entries are separated by a forward slash (`/`) or by a newline. Entries containing
+# only whitespace or starting with a `#` are considered comments and are ignored. If a line starts with a `#`, all `/`
+# on that line are part of the comment and are not considered separators. A sanitized list is a list in which there are
+# no forward slashes (`/`) and in which there are no comments.
+
+# Returns `0` if the string `$1` contains any of the entries in the sanitized list `$2` as a substring, and returns `1`
+# otherwise.
+list_contains_any() {
+    if [ -z "$2" ]; then return 1; fi
+
+    echo "$2" | while IFS="$n" read -r needle; do [ -z "${1##*"$needle"*}" ] && return 0; done
+    return "$?"
+}
+
+# Takes the list in stdin and (1) removes all lines starting with `#`, (2) replaces each `/` with a newline, (3) removes
+# all blank lines, and (4) removes all entries that contain any of the entries in the sanitized list `$1` as a
+# substring.
+list_sanitize() {
+    cat |
+        grep -v "^#" |
+        tr "/" "$n" |
+        grep -v "^[[:space:]]*\$" |
+        while IFS="$n" read -r line; do list_contains_any "$line" "$1" || echo "$line"; done
+    return 0
+}
+
+# Writes a random entry from the sanitized list in stdin to stdout.
+if [ -x "$(command -v shuf)" ]; then
+    list_choose() {
+        cat | shuf -n1
+    }
+else
+    list_choose() {
+        lines="$(cat)"
+        count="$(echo "$lines" | wc -l)"
+        idx="$(jot -r 1 1 "$count")"
+        echo "$lines" | sed "${idx}q;d"
+    }
+fi
+
+
+## Functions
+# Prints `$2`, but with color depending on `$1`. If `$1` equals `lolcat`, stdin is piped to `lolcat`. If `$1` is empty,
+# or color is not enabled in the terminal, stdin is printed normally. Otherwise, `$1` is used as the xterm color.
+color_echo() {
+    colors="$(tput colors 2>/dev/null)"
+
+    if [ "$1" = "lolcat" ]; then
+        echo "$2" | lolcat -f
+    elif [ -z "$1" ] || [ -z "$colors" ] || [ "$colors" -lt 8 ]; then
+        echo "$2"
+    else
+        # Work around OpenBSD bug https://www.mail-archive.com/bugs@openbsd.org/msg18443.html
+        tput setaf 0 1>/dev/null 2>/dev/null || tput_bug="0 0"
+
+        # shellcheck disable=SC2086 # Intentional word splitting: OpenBSD workaround requires two arguments
+        echo "$(tput setaf "$1" $tput_bug)$2$(tput sgr0)"
+    fi
+    return 0
+}
+
+# Reads `$1`; if `$2` is `0`, the first character on the line is changed to lowercase, if `$2` is `1`, the first
+# character is changed to uppercase, and otherwise nothing is changed; and writes to stdout.
+capitalize() {
+    case "$2" in
+    0) mapping="tolower" ;;
+    1) mapping="toupper" ;;
+    *) echo "$1"; return 0 ;;
+    esac
+
+    echo "$1" | awk "{ print $mapping(substr(\$0, 1, 1)) substr(\$0, 2) }"
+    return 0
+}
+
+# Given the whitespace-separated list of three words in `$1`, stores the three words in `$they`, `$them`, and `$their`,
+# respectively.
+split_pronouns() {
+    they="${1%% *}"
+    remainder="${1#* }"
+    them="${remainder%% *}"
+    their="${remainder##* }"
+
+    return 0
+}
+
+# Reads stdin, and
+# 1. replaces
+#    * `%%SWEETIE%%` with a random entry from `$1`,
+#    * `%%THEY%%` with the first word of a random entry from `$2`,
+#    * `%%THEM%%` with the second word of the same random entry from `$2`,
+#    * `%%THEIR%%` with the third word of the same random entry from `$2`, and
+#    * `%%CAREGIVER%%` with a random entry from `$3`;
+# 2. applies `capitalize_lines` using `$6` as the choice parameter;
+# 3. removes leading and trailing newlines;
+# 4. prepends `$4` and appends `$5`; and
+# 5. writes to stdout.
+fill_template() {
+    sweetie="$(echo "$1" | list_sanitize | list_choose)"
+    split_pronouns "$(echo "$2" | list_sanitize | list_choose)"
+    caregiver="$(echo "$3" | list_sanitize | list_choose)"
+
+    prefix="$(echo "$4" | list_sanitize | list_choose)"
+    suffix="$(echo "$5" | list_sanitize | list_choose)"
+
+    template="$(cat | sed -e "s/%%SWEETIE%%/$sweetie/g" \
+                          -e "s/%%THEY%%/$they/g" \
+                          -e "s/%%THEM%%/$them/g" \
+                          -e "s/%%THEIR%%/$their/g" \
+                          -e "s/%%CAREGIVER%%/$caregiver/g")"
+
+    capitalize "$prefix$template$suffix" "$6"
+    return 0
+}
+
+
+## Read options
+MOMMY_OPT_HELP=""
+MOMMY_OPT_VERSION=""
+MOMMY_OPT_TARGET="2"
+MOMMY_OPT_CONFIG_FILE="${MOMMY_OPT_CONFIG_FILE:-"${XDG_CONFIG_HOME:-"$HOME/.config"}/mommy/config.sh"}"
+MOMMY_OPT_EVAL=""
+MOMMY_OPT_STATUS=""
+
+while getopts ":hv1c:e:s:-:" OPTION; do
+    # Cheap workaround for long options without arguments
+    if [ "$OPTION" = "-" ]; then
+        OPTION="$OPTARG"
+    fi
+
+    # shellcheck disable=SC2214 # Handled by workaround
+    case "$OPTION" in
+    h|help) MOMMY_OPT_HELP="1" ;;
+    v|version) MOMMY_OPT_VERSION="1" ;;
+    1) MOMMY_OPT_TARGET="1" ;;
+    c) MOMMY_OPT_CONFIG_FILE="$OPTARG" ;;
+    e) MOMMY_OPT_EVAL="$OPTARG" ;;
+    s) MOMMY_OPT_STATUS="$OPTARG" ;;
+    ?) echo "mommy does not know option -$OPTARG~" >&2; exit 1 ;;
+    *) echo "mommy does not know option --$OPTION~" >&2; exit 1 ;;
+    esac
+done
+
+shift "$((OPTIND - 1))"
+
+
+## Load configuration
+# shellcheck disable=SC1090 # User-defined target
+[ -r "$MOMMY_OPT_CONFIG_FILE" ] && . "$MOMMY_OPT_CONFIG_FILE"
+
+
+## Output
+if [ -n "$MOMMY_OPT_HELP" ]; then
+    man mommy
+
+    status="$?"
+    if [ "$status" -ne 0 ]; then
+        printf "%s" \
+            "oops! " \
+            "mommy couldn't find the help page. " \
+            "but you can visit https://github.com/FWDekker/mommy/blob/1.2.6/README.md for more " \
+            "information~" \
+            "$n" >&2
+    fi
+    exit "$status"
+elif [ -n "$MOMMY_OPT_VERSION" ]; then
+    echo "mommy, v1.2.6, 2023-11-29"
+    exit 0
+else
+    # Run command
+    if [ -n "$MOMMY_OPT_EVAL" ]; then
+        (eval "$MOMMY_OPT_EVAL")
+        command_exit_code="$?"
+    elif [ -n "$MOMMY_OPT_STATUS" ]; then
+        command_exit_code="$MOMMY_OPT_STATUS"
+    else
+        ("$@")
+        command_exit_code="$?"
+    fi
+
+    # Choose and fill template (if enabled)
+    if list_contains_any "$command_exit_code" "$(echo "$MOMMY_IGNORED_STATUSES" | list_sanitize)"; then
+        exit "$command_exit_code"
+    elif [ "$command_exit_code" -eq 0 ] && [ "$MOMMY_COMPLIMENTS_ENABLED" = "1" ]; then
+        templates="$MOMMY_COMPLIMENTS/$MOMMY_COMPLIMENTS_EXTRA"
+    elif [ "$command_exit_code" -ne 0 ] && [ "$MOMMY_ENCOURAGEMENTS_ENABLED" = "1" ]; then
+        templates="$MOMMY_ENCOURAGEMENTS/$MOMMY_ENCOURAGEMENTS_EXTRA"
+    else
+        exit "$command_exit_code"
+    fi
+
+    color="$(echo "$MOMMY_COLOR" | list_sanitize | list_choose)"
+    forbidden_words="$(echo "$MOMMY_FORBIDDEN_WORDS" | list_sanitize)"
+
+    response="$(echo "$templates" |
+                    list_sanitize "$forbidden_words" |
+                    list_choose |
+                    fill_template "$MOMMY_SWEETIE" "$MOMMY_PRONOUNS" "$MOMMY_CAREGIVER" "$MOMMY_PREFIX" \
+                                  "$MOMMY_SUFFIX" "$MOMMY_CAPITALIZE")"
+
+    # Output template
+    case "$MOMMY_OPT_TARGET" in
+    1) color_echo "$color" "$response" >&1 ;;
+    2) color_echo "$color" "$response" >&2 ;;
+    esac
+
+    exit "$command_exit_code"
+fi
